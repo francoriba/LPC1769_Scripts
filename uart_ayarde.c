@@ -9,7 +9,7 @@ int main(){
 	uint8_t info[] = "Hola mundo \t - \t Electrónica Digital 3\t-\tFCEFyN-UNC \n\r";
 
 	while(1){
-		UART_Send(LPC_UART, info, sizeof(info), BLOCKING);
+		UART_Send(LPC_UART2, info, sizeof(info), BLOCKING);
 	}
 	return 0;
 }
@@ -17,12 +17,12 @@ int main(){
 void configPin(){
 	PINSEL_CFG_Type pinCfg;
 
-	PinCfg.Portnum = 0;
-	PinCfg.Pinnum = 2;
-	PinCfg.Pinmode = 0:
-	PinCfg.Funcnum = 1;
-	PinCfg.Opendrain = 0;
-	PINSEL_ConfigPin(&PinCgf);
+	pinCfg.Portnum = 0;
+	pinCfg.Pinnum = 10;
+	pinCfg.Pinmode = 0;
+	pinCfg.Funcnum = 1;
+	pinCfg.OpenDrain = 0;
+	PINSEL_ConfigPin(&pinCfg);
 }
 
 void configUART(){
@@ -31,8 +31,10 @@ void configUART(){
 	//configuración por defecto
 	UART_ConfigStructInit(&UARTConfigStruct);
 	//inicializa periférico
-	UART_Init(LPC_UART0, &UARTConfigStruct);
+	UART_Init(LPC_UART2, &UARTConfigStruct);
 	UART_FIFOConfigStructInit(&UARTFIFOConfigStruct);
 	//habilita transmisión
-	UART_TxCmd(LPC_UART0, ENABLE);
+	UART_TxCmd(LPC_UART2, ENABLE);
 }
+
+
