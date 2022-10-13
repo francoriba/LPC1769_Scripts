@@ -20,18 +20,23 @@ __IO uint16_t adc_val = 0;
 __IO uint8_t valL = 0;
 __IO uint8_t valH = 0;
 
+uint8_t i = 0;
+
 
 void configGPIO();
 void configADC();
 void configUART();
+void configTIMER0();
 void ADC_IRQHandler();
+void TIMER0_IRQHandler();
 
 int main(){
-
+	SystemInit();
+	uint32_t clock = SystemCoreClock;
 	configGPIO();
 	configUART();
 	configADC();
-
+	configTIMER0();
 
 	while(1){
 	}
@@ -72,12 +77,12 @@ void configADC(){
 	PINSEL_ConfigPin(&pin_stick_x_configuration);
 	PINSEL_ConfigPin(&pin_stick_y_configuration);
 
-	ADC_Init(LPC_ADC, 10000); //ajusta los bits CLKDIV para lograr la frecuencia de muestreo de 10k
-	ADC_IntConfig(LPC_ADC, ADC_ADINTEN4, ENABLE); //configura interrupcion por canal 4
-	ADC_IntConfig(LPC_ADC, ADC_ADINTEN5, ENABLE); //configura interrupcion por canal 5
-	ADC_ChannelCmd(LPC_ADC, 4, ENABLE); //habilita canal 4
-	ADC_ChannelCmd(LPC_ADC, 5, ENABLE); //habilita canal 5
-	ADC_BurstCmd(LPC_ADC, 1); //1: Set Burst mode //si no se usa en modo burst usar ADC_StartCmd() en main
+	// Por defecto el reloj de periferico del ADC tiene el valor CCLK/4 = 25 MHz pero system init lo configuro a 100MHz
+	ADC_Init(LPC_ADC, 200000); //ajusta los bits CLKDIV para lograr la frecuencia de muestreo de 200KHz
+//	ADC_IntConfig(LPC_ADC, ADC_ADINTEN4, ENABLE); //configura interrupcion por canal 4
+//	ADC_IntConfig(LPC_ADC, ADC_ADINTEN5, ENABLE); //configura interrupcion por canal 5
+//	ADC_ChannelCmd(LPC_ADC, 4, ENABLE); //habilita canal 4
+//	ADC_ChannelCmd(LPC_ADC, 5, ENABLE); //habilita canal 5
 	NVIC_EnableIRQ(ADC_IRQn);
 }
 
@@ -92,7 +97,7 @@ void configUART(){
 	PINSEL_ConfigPin(&TX_PIN);
 
 	UART_CFG_Type uart0;
-	UART_FIFO_CFG_Type UARTFIFOConfigStruct;
+	//UART_FIFO_CFG_Type UARTFIFOConfigStruct;
 
 	UART_ConfigStructInit(&uart0); //lo mismo que arriba, pero se hace automaticamente (config por defecto)
 	UART_Init(LPC_UART0, &uart0); //inicializa periferico
@@ -101,6 +106,47 @@ void configUART(){
 	//UART_FIFOConfig(LPC_UART0, &UARTFIFOConfigStruct); //inicializa FIFO
 
 	UART_TxCmd(LPC_UART0, ENABLE); //habilita transmision
+}
+
+void configTIMER0(){
+	TIM_TIMERCFG_Type timerCFG;
+	timerCFG.PrescaleOption = TIM_PRESCALE_TICKVAL;
+	timerCFG.PrescaleValue = 1;
+	TIM_Init(LPC_TIM0,TIM_TIMER_MODE,&timerCFG); //setea a 25MHz el PCLK haciendo CCLK/4
+
+	TIM_MATCHCFG_Type matchCFG;
+	matchCFG.MatchChannel = 1;
+	matchCFG.IntOnMatch = ENABLE; // no hace falta que el timer interrumpa para generar toggleo en un mat
+	matchCFG.ResetOnMatch = ENABLE;
+	matchCFG.StopOnMatch = DISABLE;
+	matchCFG.ExtMatchOutputType = TIM_EXTMATCH_NOTHING; //el mat0.1 no hace nada cada vez que desborda el timer
+	matchCFG.MatchValue = 4999999; // Tint = 1/100MHz * (1) * (MAT + 1) = 0.05s (interrumpe y togglea a 20Hz)
+	TIM_ConfigMatch(LPC_TIM0, &matchCFG); //configura el mat 0.1 del timer 0
+	TIM_Cmd(LPC_TIM0, ENABLE); //habilita TC y PC
+	TIM_ResetCounter(LPC_TIM0); //resetea TC y PC
+	NVIC_EnableIRQ(TIMER0_IRQn);
+}
+
+void TIMER0_IRQHandler(){
+
+	if(TIM_GetIntStatus(LPC_TIM0, 1)){
+		if(i%2 == 0){
+			ADC_ChannelCmd(LPC_ADC, 5, DISABLE); //deshabilita canal 5
+			ADC_IntConfig(LPC_ADC, ADC_ADINTEN5, DISABLE); //configura interrupcion por canal 5
+			ADC_IntConfig(LPC_ADC, ADC_ADINTEN4, ENABLE); //configura interrupcion por canal 5
+			ADC_ChannelCmd(LPC_ADC, 4, ENABLE); //habilita canal 4
+			i = 1;
+		}
+		else{
+			ADC_ChannelCmd(LPC_ADC, 4, DISABLE); //deshabilita canal 4
+			ADC_IntConfig(LPC_ADC, ADC_ADINTEN4, DISABLE); //configura interrupcion por canal 4
+			ADC_IntConfig(LPC_ADC, ADC_ADINTEN5, ENABLE); //configura interrupcion por canal 5
+			ADC_ChannelCmd(LPC_ADC, 5, ENABLE); //habilita canal 5
+			i = 0;
+		}
+		ADC_StartCmd(LPC_ADC, ADC_START_NOW);
+		TIM_ClearIntPending(LPC_TIM0, TIM_MR1_INT);
+	}
 }
 
 void ADC_IRQHandler(){
