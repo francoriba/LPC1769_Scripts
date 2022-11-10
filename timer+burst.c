@@ -12,18 +12,15 @@
 #include "lpc17xx_uart.h"
 
 #define ADC_avg	100
-#define PWM_dc_MAX	2400
-#define PWM_dc_MIN	600
+#define PWM_dc_MAX	2500
+#define PWM_dc_MIN	500
 #define PWM_period 20000
 
 
 __IO uint16_t adc_val1 = 0, adc_val2 = 0, adc_val3 = 0, adc_val4 = 0, adc_val5 = 0, adc_val6 = 0;
-__IO uint8_t valL = 0;__IO uint8_t valH = 0;
 __IO uint32_t mapped_val;
 
-uint8_t i = 0;
-uint32_t previous4 = 0;
-uint32_t previous5 = 0;
+
 
 
 void configGPIO();
@@ -31,11 +28,11 @@ void configADC();
 void configUART();
 void configPWM();
 int map(int x, int in_min, int in_max, int out_min, int out_max);
-void Servo_Write(uint8_t servoID, uint32_t value);//usa el valor para manipular la PWM asociada a la ID del servo
+void Servo_Write(uint8_t servoID, uint32_t phi, uint32_t lowLimit, uint32_t highLimit);//usa el valor para manipular la PWM asociada a la ID del servo
 void ADC_IRQHandler();
 
 int main(){
-	SystemInit();
+    SystemInit();
 	uint32_t clock = SystemCoreClock;
 	configGPIO();
 	configUART();
@@ -62,32 +59,54 @@ void configGPIO(){
 }
 
 void configADC(){
+	/* ----------------------ANALOG PINS CONFIGURATION--------------------------------*/
+	/* -------------------------------------------------------------------------------*/
+	PINSEL_CFG_Type analog_pins_cfg_struct; //struct for analog pins configuration
+	/* Configure pins P0.23-P0.26 as AD0.0-AD0.3*/
+	analog_pins_cfg_struct.Portnum = 0;
+	analog_pins_cfg_struct.Pinnum = 23;
+	analog_pins_cfg_struct.Funcnum = PINSEL_FUNC_1;
+	analog_pins_cfg_struct.Pinmode = PINSEL_PINMODE_TRISTATE; //neither pull-up nor pull-down
+	analog_pins_cfg_struct.OpenDrain = PINSEL_PINMODE_NORMAL; //no open drain
+	PINSEL_ConfigPin(&analog_pins_cfg_struct);
+	analog_pins_cfg_struct.Pinnum = 24;
+	PINSEL_ConfigPin(&analog_pins_cfg_struct);
+	analog_pins_cfg_struct.Pinnum = 25;
+	PINSEL_ConfigPin(&analog_pins_cfg_struct);
+	analog_pins_cfg_struct.Pinnum = 26;
+	PINSEL_ConfigPin(&analog_pins_cfg_struct);
 
-	PINSEL_CFG_Type pin_stick_x_configuration; //config AD0.4
-	PINSEL_CFG_Type pin_stick_y_configuration; //config AD0.5
-	pin_stick_x_configuration.Portnum = 1; //port 1
-	pin_stick_x_configuration.Pinnum = 30;//PIN_STICK_X; //pin 30
-	pin_stick_x_configuration.Pinmode = PINSEL_PINMODE_TRISTATE; //neither pull-up nor pull-down
-	pin_stick_x_configuration.Funcnum = PINSEL_FUNC_3; //AD0.4 function
-	pin_stick_x_configuration.OpenDrain = PINSEL_PINMODE_NORMAL; //no open drain
-	pin_stick_y_configuration.Portnum = 1; //port 1
-	pin_stick_y_configuration.Pinnum = 31; //pin 31
-	pin_stick_y_configuration.Pinmode = PINSEL_PINMODE_TRISTATE; //neither pull-up nor pull-down
-	pin_stick_y_configuration.Funcnum = PINSEL_FUNC_3; //AD0.5 function
-	pin_stick_y_configuration.OpenDrain = PINSEL_PINMODE_NORMAL; //no open drain
-	PINSEL_ConfigPin(&pin_stick_x_configuration);
-	PINSEL_ConfigPin(&pin_stick_y_configuration);
+	/* Configure pins P1.30-P1.31 as AD0.4-AD0.5 */
+	analog_pins_cfg_struct.Portnum = 1;
+	analog_pins_cfg_struct.Pinnum = 30;
+	analog_pins_cfg_struct.Funcnum = PINSEL_FUNC_3;
+	PINSEL_ConfigPin(&analog_pins_cfg_struct);
+	analog_pins_cfg_struct.Pinnum = 31;
+	analog_pins_cfg_struct.Funcnum = PINSEL_FUNC_3;
 
+	/* -----------------------------ADC CONFIGURATION---------------------------------*/
+	/* -------------------------------------------------------------------------------*/
 	CLKPWR_SetPCLKDiv(CLKPWR_PCLKSEL_ADC, 3); //ADC PCLK = CCLK/8
 	uint32_t aver = CLKPWR_GetPCLK (CLKPWR_PCLKSEL_ADC);
 
 	ADC_Init(LPC_ADC, 120); //ajusta los bits CLKDIV para lograr la frecuencia de muestreo de 8k
 
+	ADC_IntConfig(LPC_ADC, ADC_ADINTEN0, ENABLE); //configura interrupcion por canal 0
+	ADC_IntConfig(LPC_ADC, ADC_ADINTEN1, ENABLE); //configura interrupcion por canal 1
+	ADC_IntConfig(LPC_ADC, ADC_ADINTEN2, ENABLE); //configura interrupcion por canal 2
+	ADC_IntConfig(LPC_ADC, ADC_ADINTEN3, ENABLE); //configura interrupcion por canal 3
 	ADC_IntConfig(LPC_ADC, ADC_ADINTEN4, ENABLE); //configura interrupcion por canal 4
 	ADC_IntConfig(LPC_ADC, ADC_ADINTEN5, ENABLE); //configura interrupcion por canal 5
+
+	ADC_ChannelCmd(LPC_ADC, 0, ENABLE); //habilita canal 0
+	ADC_ChannelCmd(LPC_ADC, 1, ENABLE); //habilita canal 1
+	ADC_ChannelCmd(LPC_ADC, 2, ENABLE); //habilita canal 2
+	ADC_ChannelCmd(LPC_ADC, 3, ENABLE); //habilita canal 3
 	ADC_ChannelCmd(LPC_ADC, 4, ENABLE); //habilita canal 4
 	ADC_ChannelCmd(LPC_ADC, 5, ENABLE); //habilita canal 5
+
 	ADC_BurstCmd(LPC_ADC, 1); //1: Set Burst mode //si no se usa en modo burst usar ADC_StartCmd() en main
+
 	NVIC_EnableIRQ(ADC_IRQn);
 }
 
@@ -132,12 +151,12 @@ void configPWM(){
 	LPC_PWM1->MR0 = PWM_period; // 20ms period duration 19999
 
 	/*Defines the arm initial position*/
-	LPC_PWM1->MR1 = 999; //1ms - default pulse duration - servo at 0 degrees
-	LPC_PWM1->MR2 = 999; //1ms - default pulse duration - servo at 0 degrees
-	LPC_PWM1->MR3 = 999; //1ms - default pulse duration - servo at 0 degrees
-	LPC_PWM1->MR4 = 999; //1ms - default pulse duration - servo at 0 degrees
-	LPC_PWM1->MR5 = 999; //1ms - default pulse duration - servo at 0 degrees
-	LPC_PWM1->MR6 = 999; //1ms - default pulse duration - servo at 0 degrees
+	LPC_PWM1->MR1 = PWM_dc_MIN; //1ms - default pulse duration - servo at 0 degrees
+	LPC_PWM1->MR2 = PWM_dc_MIN; //1ms - default pulse duration - servo at 0 degrees
+	LPC_PWM1->MR3 = PWM_dc_MIN; //1ms - default pulse duration - servo at 0 degrees
+	LPC_PWM1->MR4 = PWM_dc_MIN; //1ms - default pulse duration - servo at 0 degrees
+	LPC_PWM1->MR5 = PWM_dc_MIN; //1ms - default pulse duration - servo at 0 degrees
+	LPC_PWM1->MR6 = PWM_dc_MIN; //1ms - default pulse duration - servo at 0 degrees
 
 	LPC_PWM1->MCR = (1<<1); //Reset PWM TC on PWM1MR0 match
 	LPC_PWM1->LER = (1<<1) | (1<<0) | (1<<2) | (1<<3) | (1<<4) | (1<<5) | (1<<6); //update values in MR0 and MR1
@@ -148,112 +167,65 @@ void configPWM(){
 }
 
 int map(int x, int in_min, int in_max, int out_min, int out_max){
-	int val =((in_max-in_min)*x)/(out_max-out_min); // 180*value/4096
-	return val;
+	return ((out_max-out_min)*x)/(in_max-in_min) + out_min;
 }
 
-void Servo_Write(uint8_t servoID, uint32_t value){
+void Servo_Write(uint8_t servoID, uint32_t phi, uint32_t lowLimit, uint32_t highLimit){
+	float k = (highLimit - lowLimit)/180;	// 2500 - 500 = 2000, 2000/180 = 11.11
+	float MRx_val = PWM_dc_MIN + (k * phi);
 
-	float tmp = 999 + (5.555 * value);
-	uint32_t MRx_val = tmp;
-
-	/* check for valid value of MRx_val */
-	if(MRx_val >= 999 && MRx_val <=1999){
-		switch (servoID){
-			case 0:
-				LPC_PWM1->MR1 = MRx_val;
-				LPC_PWM1->LER = (1<<1); //Load the MR1 new value at start of next cycle
-				break;
-			case 1:
-				LPC_PWM1->MR2 = MRx_val;
-				LPC_PWM1->LER = (1<<2); //Load the MR2 new value at start of next cycle
-				break;
-			case 2:
-				LPC_PWM1->MR3 = MRx_val;
-				LPC_PWM1->LER = (1<<2); //Load the MR3 new value at start of next cycle
-				break;
-			case 3:
-				LPC_PWM1->MR4 = MRx_val;
-				LPC_PWM1->LER = (1<<2); //Load the MR4 new value at start of next cycle
-				break;
-			case 4:
-				LPC_PWM1->MR5 = MRx_val;
-				LPC_PWM1->LER = (1<<2); //Load the MR5 new value at start of next cycle
-				break;
-			case 5:
-				LPC_PWM1->MR6 = MRx_val;
-				LPC_PWM1->LER = (1<<2); //Load the MR6 new value at start of next cycle
-				break;
-			default:
-				break;
-		}
+	switch (servoID){
+		case 0:
+			LPC_PWM1->MR1 = MRx_val;
+			LPC_PWM1->LER = (1<<1); //Load the MR1 new value at start of next cycle
+			break;
+		case 1:
+			LPC_PWM1->MR2 = MRx_val;
+			LPC_PWM1->LER = (1<<2); //Load the MR2 new value at start of next cycle
+			break;
+		case 2:
+			LPC_PWM1->MR3 = MRx_val;
+			LPC_PWM1->LER = (1<<3); //Load the MR3 new value at start of next cycle
+			break;
+		case 3:
+			LPC_PWM1->MR4 = MRx_val;
+			LPC_PWM1->LER = (1<<4); //Load the MR4 new value at start of next cycle
+			break;
+		case 4:
+			LPC_PWM1->MR5 = MRx_val;
+			LPC_PWM1->LER = (1<<5); //Load the MR5 new value at start of next cycle
+			break;
+		case 5:
+			LPC_PWM1->MR6 = MRx_val;
+			LPC_PWM1->LER = (1<<6); //Load the MR6 new value at start of next cycle
+			break;
+		default:
+			break;
 	}
 }
 
 void ADC_IRQHandler(){
 //logica de control de servomotores
+
+	if(ADC_ChannelGetStatus(LPC_ADC, 0, ADC_DATA_DONE)){ //canal 4-> mov en x
+		adc_val1 = ADC_ChannelGetData(LPC_ADC, 1);
+		mapped_val = map(adc_val1, 0, 4095, 0, 180);
+		Servo_Write(0 , mapped_val, 500, 2500);
+		UART_SendByte(LPC_UART0, mapped_val);
+	}
 	if(ADC_ChannelGetStatus(LPC_ADC, 4, ADC_DATA_DONE)){ //canal 4-> mov en x
 
-		adc_val1 = ADC_ChannelGetData(LPC_ADC, 4);
-
-		valL = adc_val1 & 0xFF;
-		valH = (adc_val1 >> 8) & 0xFF;
-		UART_SendByte(LPC_UART0, valL);
-		UART_SendByte(LPC_UART0, valH);
-
-		mapped_val = map(adc_val1, 0, 4095, 0, 180);
-		Servo_Write(0 , mapped_val);
-
-		if(adc_val1 >= 2500){
-			LPC_GPIO2->FIOSET |= (1<<9);
-			LPC_GPIO2->FIOCLR |= (1<<8);
-			LPC_GPIO2->FIOCLR |= (1<<7);
-			LPC_GPIO2->FIOCLR |= (1<<6);
-		}
-		else if (adc_val1 <= 1500){
-			LPC_GPIO2->FIOSET |= (1<<8);
-			LPC_GPIO2->FIOCLR |= (1<<9);
-			LPC_GPIO2->FIOCLR |= (1<<7);
-			LPC_GPIO2->FIOCLR |= (1<<6);
-		}
-		else{
-			LPC_GPIO2->FIOCLR |= (1<<2);
-			LPC_GPIO2->FIOCLR |= (1<<3);
-			LPC_GPIO2->FIOCLR |= (1<<1);
-			LPC_GPIO2->FIOCLR |= (1<<0);
-		}
+		adc_val4 = ADC_ChannelGetData(LPC_ADC, 4);
+		mapped_val = map(adc_val4, 0, 4095, 0, 180);
+		Servo_Write(4 , mapped_val, 500, 2500);
+		UART_SendByte(LPC_UART0, mapped_val);
 	}
-	else if(ADC_ChannelGetStatus(LPC_ADC, 5, ADC_DATA_DONE)){//canal 5-> mov en y
+	if(ADC_ChannelGetStatus(LPC_ADC, 5, ADC_DATA_DONE)){//canal 5-> mov en y
 
-		adc_val2 = ADC_ChannelGetData(LPC_ADC, 5);
-
-		valL = adc_val2 & 0xFF;
-		valH = (adc_val2>>8) & 0x00FF;
-		UART_SendByte(LPC_UART0, valL);
-		UART_SendByte(LPC_UART0, valH);
-
-		mapped_val = map(adc_val2, 0, 4095, 0, 180);
-
-		Servo_Write(1 , mapped_val);
-
-		if(adc_val2 >= 2500){
-			LPC_GPIO2->FIOSET |= (1<<7);
-			LPC_GPIO2->FIOCLR |= (1<<6);
-			LPC_GPIO2->FIOCLR |= (1<<8);
-			LPC_GPIO2->FIOCLR |= (1<<9);
-		}
-		else if (adc_val2 <= 1500){
-			LPC_GPIO2->FIOSET |= (1<<6);
-			LPC_GPIO2->FIOCLR |= (1<<7);
-			LPC_GPIO2->FIOCLR |= (1<<8);
-			LPC_GPIO2->FIOCLR |= (1<<9);
-		}
-		else{
-			LPC_GPIO2->FIOCLR |= (1<<9);
-			LPC_GPIO2->FIOCLR |= (1<<8);
-			LPC_GPIO2->FIOCLR |= (1<<7);
-			LPC_GPIO2->FIOCLR |= (1<<6);
-		}
+		adc_val5 = ADC_ChannelGetData(LPC_ADC, 5);
+		mapped_val = map(adc_val5, 5, 4095, 0, 180);
+		Servo_Write(5 , mapped_val, 500, 2500);
+		UART_SendByte(LPC_UART0, mapped_val);
 	}
 }
 

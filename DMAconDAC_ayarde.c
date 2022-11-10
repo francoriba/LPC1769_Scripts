@@ -13,7 +13,7 @@ void confDMA();
 
 GPDMA_Channel_CFG_Type GPDMACfg;
 
-uint32_t dac_sine_lut[NUM_SINE_SAMPLE];
+uint32_t dac_sine_lut[NUM_SINE_SAMPLE]; //lo que se va a transferir por DMA al DAC
 
 int main(){
 
@@ -22,9 +22,6 @@ int main(){
 
 	confPin();
 	confDac();
-
-
-
 	//Prepare DAC sine look up table
 	for(i = 0; i < NUM_SINE_SAMPLE; i++)
 	{
@@ -45,7 +42,6 @@ int main(){
 	}
 	confDMA();
 	//Enable GPDMA channel 0
-	GPDMA_ChannelCmd(0, ENABLE);
 	while(1);
 	return 0;
 }
@@ -81,8 +77,18 @@ void confDMA(){
 	GPDMA_LLI_Type DMA_LLI_Struct;
 	DMA_LLI_Struct.SrcAddr = (uint32_t) dac_sine_lut;
 	DMA_LLI_Struct.DstAddr = (uint32_t) & (LPC_DAC->DACR);
-	DMA_LLI_Struct.NextLLI = (uint32_t)&DMA_LLI_Struct;
+	DMA_LLI_Struct.NextLLI = (uint32_t)&DMA_LLI_Struct; //se enlaza a si misma
 	DMA_LLI_Struct.Control = DMA_SIZE | (2<<18) | (2<<21) | (1<<26);
+
+
+	/*
+	GPDMA_LLI_Type DMA_LLI2_Struct;
+	DMA_LLI2_Struct.SrcAddr = (uint32_t) proxRegion;
+	DMA_LLI2_Struct.DstAddr = (uint32_t) & (LPC_DAC->DACR);
+	DMA_LLI2_Struct.NextLLI = 0; //termina
+	DMA_LLI2_Struct.Control = DMA_SIZE | (2<<18) | (2<<21) | (1<<26);
+
+	*/
 
 	/* GPDMA block section-------------*/
 	/*Initialize GPDMA controller */
@@ -104,10 +110,12 @@ void confDMA(){
 	GPDMACfg.SrcConn = 0;
 	//Destination connection
 	GPDMACfg.DstConn = GPDMA_CONN_DAC;
-	// Linked List Item - unused
+	// Linked List Item 
 	GPDMACfg.DMALLI = (uint32_t) &DMA_LLI_Struct;
 	//Setup channel with given parameter
 	GPDMA_Setup(&GPDMACfg);
+	GPDMA_ChannelCmd(0, ENABLE);
+
 
 }
 
